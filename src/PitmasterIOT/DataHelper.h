@@ -11,12 +11,8 @@
 void initLittleFS(const char * path);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void appendFile(fs::FS &fs, const char * path, const char * message);
-void readFile(fs::FS &fs, const char * path);
+String readFile(fs::FS &fs, const char * path);
 void deleteFile(fs::FS &fs, const char * path);
-
-//void checkAndResetJsonFile(const char* filename);
-//void addLogEntry(const char* filename, const char* time, float temp0, float temp1, int fan);
-//String getLogFileContents(const char* filename);
-//String getFileSystemInfo();
+String getFileSystemInfo();
 
 #endif /* DATAHELPER_H */

@@ -23,6 +23,12 @@ document.getElementById('hamburgerIcon').addEventListener('click', toggleConfig)
 });
 
 function onload(event) {
+    // todo:
+    // 1. fetchLogData
+    // 2. if fecthLogData succesfull > clearLogData(false)
+    // 3. add fetched data to cache ? saveLogData(logData) 
+    // 4. apply data to chart using > updateChartWithBulkData()
+
     initWebSocket();
 }
 
@@ -38,10 +44,11 @@ function initWebSocket() {
     websocket.onmessage = onMessage;
 }
 
-// When websocket is established, call the getReadings() function
 function onOpen(event) {
+    // When websocket is established, call the getReadings function
     console.log('Connection opened');
     getReadings();
+    // todo: get server logs and apply them in bulk...
 }
 
 function onClose(event) {
@@ -109,6 +116,35 @@ function saveLogData(logData) {
   //checkLocalStorageSize();
 }
 
+function saveBulkLogData(logData) {
+    // Split the log data into lines
+    const lines = logData.trim().split('\n');
+
+    // Process each line
+    const logObjects = lines.map(line => {
+        // Trim each line to remove whitespace and check if it's empty
+        const trimmedLine = line.trim();
+        if (!trimmedLine) {
+            return null;
+        }
+
+        // Remove outer double quotes and replace escaped double quotes
+        const processedLine = trimmedLine.startsWith('"') && trimmedLine.endsWith('"') 
+                               ? trimmedLine.slice(1, -1).replace(/\\"/g, '"') 
+                               : trimmedLine;
+
+        try {
+            return JSON.parse(processedLine);
+        } catch (e) {
+            console.error('Error parsing line:', e, processedLine);
+            return null; // or handle the error as appropriate
+        }
+    }).filter(obj => obj !== null); // Filter out any lines that couldn't be parsed
+
+    // Store the array in local storage
+    localStorage.setItem('logData', JSON.stringify(logObjects));
+}
+
 function checkLocalStorageSize() {
   var logDataString = localStorage.getItem('logData'); // Get the data as a string
   if (logDataString) {
@@ -121,20 +157,65 @@ function checkLocalStorageSize() {
   }
 }
 
-function clearLogData() {
+function clearLogData(confirmAction = true) {
 
-  var userConfirmed = confirm('Are you sure you want to clear the cache?');
+  if(confirmAction){
+    var userConfirmed = confirm('Are you sure you want to clear the cache?');
+
+    if (userConfirmed) {
+        // The user clicked OK
+        // Add your logic to clear the cache here
+        // This will remove the specific log data entry from localStorage
+        localStorage.removeItem('logData');
+        console.log('Log data has been cleared.');
+    } else {
+        // The user clicked Cancel
+        console.log('Cache clear canceled by user.');
+    }
+  }
+  else {
+    localStorage.removeItem('logData');
+  }
+}
+
+// function getStoredLogData() {
+//   const storedData = localStorage.getItem('logData');
+//   return storedData ? JSON.parse(storedData) : null;
+// }
+
+// const logArray = getStoredLogData();
+// console.log(logArray);
+
+function fetchLogData() {
+
+  var userConfirmed = confirm('Are you sure you want to get the server logs?');
 
   if (userConfirmed) {
-      // The user clicked OK
-      // Add your logic to clear the cache here
-      // This will remove the specific log data entry from localStorage
-      localStorage.removeItem('logData');
-      console.log('Log data has been cleared.');
+    fetch('/log.json')
+    .then(response => {
+      // Check if the response is successful
+      if (!response.ok) {
+          throw new Error('Network response was not ok ' + response.statusText);
+      }
+      return response.text(); // Get the response text
+    })
+    .then(textData => {
+        console.log('Received text data:', textData);
+        // Handle the text data here
+        // You can process, display, or parse the text as needed
+        clearLogData(false);
+        saveBulkLogData(textData); // todo: format lines to create an array of objects
+        updateChartWithBulkData();
+    })
+    .catch(error => {
+        console.error('Fetch error:', error); // Handle any errors
+    });
   } else {
       // The user clicked Cancel
-      console.log('Cache clear canceled by user.');
+      console.log('canceled by user');
   }
+
+
 }
 
 function provideLogDataInfo() {

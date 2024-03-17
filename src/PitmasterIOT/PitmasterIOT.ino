@@ -1,3 +1,4 @@
+#include "Constants.h"
 #include "DataHelper.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -6,76 +7,23 @@
 #include "max6675.h"
 #include <Preferences.h>
 #include <Arduino.h>
-#include "FS.h"
+ 
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Arduino_JSON.h>
 
 #define FORMAT_LITTLEFS_IF_FAILED true
 
-const char* ssid = "Your Network SSID Here";
-const char* password = "Your Network Password Here";
-
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
-
-JSONVar readings;
-JSONVar configs;
-
-// Timer variables
-unsigned long lastTime = 0;
-unsigned long timerDelay = 15000;
-
-// thermo_0 setup
-int thermoDO_0 = 19; // SO
-int thermoCS_0 = 18; // CS
-int thermoCLK_0 = 5; // SCK
-
-// thermo_1 setu
-int thermoDO_1 = 4; // SO
-int thermoCS_1 = 2; // CS
-int thermoCLK_1 = 15; // SCK
-
-float thermoFahrenheit_0, thermoFahrenheit_1;
-
-// pwm setup
-const int pwmPin = 26; // PWM control pin
-const int tachPin = 27; // RPM feedback pin
-
-const int freq = 25000; // 25 kHz PWM frequency
-const int ledChannel = 0; // Use LED channel 0
-const int resolution = 8; // 8-bit resolution
-
-// mosfet gate to toggle fan ground
-const int MOSFET_GATE = 14;
 
 MAX6675 thermocouple_0(thermoCLK_0, thermoCS_0, thermoDO_0);
 MAX6675 thermocouple_1(thermoCLK_1, thermoCS_1, thermoDO_1);
 
+float thermoFahrenheit_0, thermoFahrenheit_1;
 Preferences preferences;
-
-const int thermAdjDef_0 = 0;
-const int thermAdjDef_1 = 0;
-
-const char* thermoKey_0 = "thermoKey_0";
-const char* thermoKey_1 = "thermoKey_1";
-
-const char* temperature_0 = "temp0";
-const char* temperature_1 = "temp1";
-
-const char* thermo_0_adjustment = "thermo_0_adjustment";
-const char* thermo_1_adjustment = "thermo_1_adjustment";
-
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 0;
-const int   daylightOffset_sec = 3600;
-
-struct tm currentTime; // Global variable to hold the current time
-unsigned long lastSyncTime = 0; // Last time the time was synchronized
-const long syncInterval = 86400000; // Interval to sync time (24 hour in milliseconds)
-bool timeIsSynchronized = false; // Flag to check if time is synchronized
-
-const char* logFileName = "/log.json";
+JSONVar readings;
+JSONVar configs;
 
 String getFormattedTime() {
     if (timeIsSynchronized) {
@@ -156,6 +104,12 @@ void setup() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(LittleFS, "/index.html", "text/html");
   });
+
+  // serve entire log.json file
+  server.on(logFileName, HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, logFileName, "application/text");
+  });
+
   server.serveStatic("/", LittleFS, "/");
   server.begin();
 }
@@ -200,13 +154,14 @@ String getSensorReadings(){
 
   //addLogEntry("/log.json", "2023-11-17T13:28:06.419Z", 80.0, 80.0, 0);
   appendFile(LittleFS, logFileName, messageCStr); //Append data to the file
-  readFile(LittleFS, logFileName); // Read the contents of the file
+  //readFile(LittleFS, logFileName); // Read the contents of the file
+  //Serial.println(getFileSystemInfo());
   
   return jsonString;
 }
 
-void notifyClients(String sensorReadings) {
-  ws.textAll(sensorReadings);
+void notifyClients(String payload) {
+  ws.textAll(payload);
 }
 
 void SendClientsConfiguration(){
@@ -272,6 +227,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
 
         configs[thermoKey_0] = tk0; 
         configs[thermoKey_1] = tk1; 
+      }
+      else if(event == "getLogs"){
+        // todo: modify readFile to return json, and notifyClients 
       }
     }
   }
@@ -352,14 +310,34 @@ void updateTime() {
                 currentTime.tm_hour++;
                 if (currentTime.tm_hour >= 24) {
                     currentTime.tm_hour = 0;
-                    // Additional day/month/year handling can be added here
+                    currentTime.tm_mday++;  // Increment the day
+                    // Check for month and year increment
+                    if (isEndOfMonth(currentTime.tm_year, currentTime.tm_mon, currentTime.tm_mday)) {
+                        currentTime.tm_mday = 1; // Reset day to 1
+                        currentTime.tm_mon++;    // Increment the month
+                        if (currentTime.tm_mon > 11) {
+                            currentTime.tm_mon = 0; // Reset month to January
+                            currentTime.tm_year++;  // Increment the year
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-void loop() { 
+bool isEndOfMonth(int year, int month, int day) {
+    // Array to hold the number of days in each month
+    int daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    // Check for leap year and adjust February days
+    if (month == 1 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) {
+        return day > 29;
+    } else {
+        return day > daysInMonth[month];
+    }
+}
+
+void loop() {
 
   updateTime();
 

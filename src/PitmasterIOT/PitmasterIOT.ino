@@ -1,4 +1,4 @@
-#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
+#include <WiFiManager.h>
 #include "max6675.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -10,11 +10,45 @@
 #define MQTT_MAX_PACKET_SIZE 512
 #include <PubSubClient.h>
 
-const char* ssid = "Your Network SSID Here";
-const char* password = "Your Network Password Here";
-const char* mqtt_server = "mqtt_ip";
-const char* mqtt_username = "mqtt_username";
-const char* mqtt_password = "mqtt_password";
+#pragma region // variables
+
+// wifi manager start
+const char* PARAM_INPUT_1 = "ssid";
+const char* PARAM_INPUT_2 = "pass";
+const char* PARAM_INPUT_3 = "ip";
+const char* PARAM_INPUT_4 = "gateway";
+const char* PARAM_INPUT_5 = "subnet";
+const char* PARAM_INPUT_6 = "mqtt-address";
+const char* PARAM_INPUT_7 = "mqtt-username";
+const char* PARAM_INPUT_8 = "mqtt-password";
+
+String ssid;
+String password;
+String ip;
+String gateway;
+String subnet;
+String mqtt_address;
+String mqtt_username;
+String mqtt_password;
+
+const char* ssidPath = "/ssid.txt";
+const char* passPath = "/pass.txt";
+const char* ipPath = "/ip.txt";
+const char* subnetPath = "/subnet.txt";
+const char* gatewayPath = "/gateway.txt";
+const char* mqttAddressPath = "/mqtt-address.txt";
+const char* mqttUsernamePath = "/mqtt-username.txt";
+const char* mqttPasswordPath = "/mqtt-password.txt";
+
+IPAddress localIP;
+IPAddress localGateway;
+IPAddress localSubnet;
+
+// Timer variables
+unsigned long previousMillisWifi = 0;
+const long interval = 30000;  // interval to wait for Wi-Fi connection (milliseconds)
+
+// wifi manager end
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -114,8 +148,72 @@ float a1 = 0; // Coefficient for x^2
 float b1 = 0;    // Coefficient for x
 float c1 = 0; // Constant term (change this only for simple +/- adjustment )
 
+const int onboardLed = 2;
+
+#pragma endregion
+
+void ResetWifiConfig() {
+    Serial.println("Deleting Wifi Settings.");
+    deleteFile(ssidPath);
+    deleteFile(passPath);
+    deleteFile(ipPath);
+    deleteFile(gatewayPath);
+    deleteFile(subnetPath);
+    Serial.println("Wifi Settings Deleted.");
+    Serial.println("Restarting Esp32.");
+    delay(500);
+    ESP.restart();
+}
+
+String readFile(const char * path) {
+    Serial.printf("Reading file: %s\r\n", path);
+
+    File file = LittleFS.open(path);  // Open the file using LittleFS
+    if (!file || file.isDirectory()) {
+        Serial.println("- failed to open file for reading");
+        return String();
+    }
+
+    String fileContent;
+    while (file.available()) {
+        fileContent = file.readStringUntil('\n');
+        break;     
+    }
+    file.close();  // Close the file
+    return fileContent;
+}
+
+void writeFile(const char * path, const char * message) {
+    Serial.printf("Writing file: %s\r\n", path);
+
+    File file = LittleFS.open(path, FILE_WRITE);  // Open the file using LittleFS for writing
+    if (!file) {
+        Serial.println("- failed to open file for writing");
+        return;
+    }
+    if (file.print(message)) {
+        Serial.println("- file written");
+    } else {
+        Serial.println("- write failed");
+    }
+    file.close();  // Close the file after writing
+}
+
+void deleteFile(const char * path) {
+    Serial.printf("Deleting file: %s\r\n", path);
+    if (LittleFS.remove(path)) {
+        Serial.println("- file deleted successfully");
+    } else {
+        Serial.println("- failed to delete file");
+    }
+}
+
 void setup() {
   Serial.begin(9600);
+
+  // Set GPIO 2 as an OUTPUT (onboard LED)
+  pinMode(onboardLed, OUTPUT);
+  digitalWrite(onboardLed, LOW);
 
   Serial.println("Starting setup()");
   delay(1000);
@@ -166,14 +264,135 @@ void setup() {
   pinMode(tachPin, INPUT_PULLUP); // Configure tachPin as input with internal pull-up resistor
   pinMode(MOSFET_GATE, OUTPUT);
   digitalWrite(MOSFET_GATE, LOW); // Turn Fan Off
-  initWiFi();
 
-  delay(1000);
+  Serial.println("Wifi Manager Settings:");
+  ssid = readFile(ssidPath);
+  password = readFile(passPath);
+  ip = readFile(ipPath);
+  gateway = readFile(gatewayPath);
+  subnet = readFile(subnetPath);
+  Serial.println(ssid);
+  Serial.println(password);
+  Serial.println(ip);
+  Serial.println(gateway);
+  Serial.println(subnet);
+   
+  if(initWiFi()){
+    initWebServerAndMqtt();
+  } 
+  else{
+    initWifiManager();
+  }
+}
 
-  client.setServer(mqtt_server, 1883);
+void initWifiManager(){
+  // Connect to Wi-Fi network with SSID and password
+    Serial.println("Setting AP (Access Point)");
+    // NULL sets an open Access Point
+    WiFi.softAP("ESP-WIFI-MANAGER", NULL);
+
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(IP); 
+
+    // Web Server Root URL
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+      Serial.println("wifimanager.html");
+      request->send(LittleFS, "/wifimanager.html", "text/html");
+    });
+    
+    server.serveStatic("/", LittleFS, "/");
+    
+    server.on("/", HTTP_POST, [](AsyncWebServerRequest *request) {
+      int params = request->params();
+      for(int i=0;i<params;i++){
+        AsyncWebParameter* p = request->getParam(i);
+        if(p->isPost()){
+          // HTTP POST ssid value
+          if (p->name() == PARAM_INPUT_1) {
+            ssid = p->value().c_str();
+            Serial.print("SSID set to: ");
+            Serial.println(ssid);
+            // Write file to save value
+            writeFile(ssidPath, ssid.c_str());
+          }
+          // HTTP POST password value
+          if (p->name() == PARAM_INPUT_2) {
+            password = p->value().c_str();
+            Serial.print("Password set to: ");
+            Serial.println(password);
+            // Write file to save value
+            writeFile(passPath, password.c_str());
+          }
+          // HTTP POST ip value
+          if (p->name() == PARAM_INPUT_3) {
+            ip = p->value().c_str();
+            Serial.print("IP Address set to: ");
+            Serial.println(ip);
+            // Write file to save value
+            writeFile(ipPath, ip.c_str());
+          }
+          // HTTP POST gateway value
+          if (p->name() == PARAM_INPUT_4) {
+            gateway = p->value().c_str();
+            Serial.print("Gateway set to: ");
+            Serial.println(gateway);
+            // Write file to save value
+            writeFile(gatewayPath, gateway.c_str());
+          }
+
+          // HTTP POST subnet value
+          if (p->name() == PARAM_INPUT_5) {
+            subnet = p->value().c_str();
+            Serial.print("Subnet set to: ");
+            Serial.println(subnet);
+            // Write file to save value
+            writeFile(subnetPath, subnet.c_str());
+          }
+
+          // HTTP POST mqtt-address value
+          if (p->name() == PARAM_INPUT_6) {
+            mqtt_address = p->value().c_str();
+            Serial.print("mqtt_address set to: ");
+            Serial.println(mqtt_address);
+            // Write file to save value
+            writeFile(mqttAddressPath, mqtt_address.c_str());
+          }
+
+          // HTTP POST mqtt-username value
+          if (p->name() == PARAM_INPUT_7) {
+            mqtt_username = p->value().c_str();
+            Serial.print("mqtt_username set to: ");
+            Serial.println(mqtt_username);
+            // Write file to save value
+            writeFile(mqttUsernamePath, mqtt_username.c_str());
+          }
+
+          // HTTP POST mqtt-password value
+          if (p->name() == PARAM_INPUT_8) {
+            mqtt_password = p->value().c_str();
+            Serial.print("mqtt_password set to: ");
+            Serial.println(mqtt_password);
+            // Write file to save value
+            writeFile(mqttPasswordPath, mqtt_password.c_str());
+          }
+
+          //Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+        }
+      }
+      request->send(200, "text/plain", "Done. ESP will restart, connect to your router and go to IP address: " + ip);
+      delay(3000);
+      ESP.restart();
+    });
+    server.begin();
+}
+
+void initWebServerAndMqtt(){
+  client.setServer(mqtt_address.c_str(), 1883);
   client.setBufferSize(512);
 
   delay(1000);
+
   initHomeAssistantDiscovery();
 
   delay(1000);
@@ -196,7 +415,7 @@ void setup() {
 void reconnect() {
   while (!client.connected()) {
     // Use the connect function with username and password
-    if (client.connect("ESP32Client", mqtt_username, mqtt_password)) {
+    if (client.connect("ESP32Client", mqtt_username.c_str(), mqtt_password.c_str())) {
       // If you need to subscribe to topics upon connection, do it here
     } else {
       // If the connection fails, wait 5 seconds before retrying
@@ -333,8 +552,7 @@ void processReadings() {
           String jsonString1;
           serializeJson(doc1, jsonString1);
           client.publish("home/pitmasteriot/temperature", jsonString1.c_str());
-      }
-        
+      }       
     }
 }
 
@@ -361,7 +579,6 @@ float processThermocoupleReadings(float readings[], const char* thermocoupleName
     }
 }
 
-// Function to apply the polynomial correction
 float applyPolyCorrection(float rawTemp, float a, float b, float c) {
     // Check if all coefficients are zero
     if (a == 0 && b == 0 && c == 0) {
@@ -385,27 +602,61 @@ void initLittleFS(){
     }
 }
 
-void initWiFi() {
+bool initWiFi() {
 
-  // Optional: Set your Static IP address
-  IPAddress local_IP(192, 168, 86, 184);
+  // wifi config/connect start
+  if(ssid=="" || ip==""){
+    Serial.println("Undefined SSID or IP address.");
+    return false;
+  }
 
-  // Optional: Set your Gateway IP address
-  IPAddress gateway(192, 168, 86, 1);
-  IPAddress subnet(255, 255, 255, 0);
+  Serial.println("initWifi Values:");
+  Serial.println(ssid);
+  Serial.println(password);
+  Serial.println(ip);
+  Serial.println(gateway);
+  Serial.println(subnet); 
 
-  if(!WiFi.config(local_IP, gateway, subnet)) {
+  delay(1000);
+
+  localIP.fromString(ip.c_str());
+  localGateway.fromString(gateway.c_str());
+  localSubnet.fromString(subnet.c_str());
+
+  delay(1000);
+
+  //WiFi.mode(WIFI_STA);
+  //WiFi.setHostname("wifi_manager_01");
+  if (!WiFi.config(localIP, localGateway, localSubnet)){
     Serial.println("STA Failed to configure");
+    return false;
   }
 
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname("bootleg_bbq_blower");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  WiFi.setHostname("wifi_manager_01");
+  WiFi.begin(ssid.c_str(), password.c_str());
+
+  delay(1000);
+
+  Serial.println("Connecting to WiFi...");
+  // wifi config/connecct end
+
+  unsigned long currentMillis = millis();
+  previousMillisWifi = currentMillis;
+
+  while(WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi..");
+    currentMillis = millis();
+    if (currentMillis - previousMillisWifi >= interval) {
+      Serial.println("Failed to connect.");
+      return false;
+    }
   }
+
+  Serial.println("Connected!");
   Serial.println(WiFi.localIP());
+  return true;
 }
 
 void notifyClients(String payload) {

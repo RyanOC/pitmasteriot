@@ -12,6 +12,8 @@
 
 #pragma region // variables
 
+bool isWifiConnected = false;
+
 // wifi manager start
 const char* PARAM_INPUT_1 = "ssid";
 const char* PARAM_INPUT_2 = "pass";
@@ -271,11 +273,18 @@ void setup() {
   ip = readFile(ipPath);
   gateway = readFile(gatewayPath);
   subnet = readFile(subnetPath);
+  mqtt_address =readFile(mqttAddressPath);
+  mqtt_username = readFile(mqttUsernamePath);
+  mqtt_password = readFile(mqttPasswordPath);
+
   Serial.println(ssid);
   Serial.println(password);
   Serial.println(ip);
   Serial.println(gateway);
   Serial.println(subnet);
+  Serial.println(mqtt_address);
+  Serial.println(mqtt_username);
+  Serial.println(mqtt_password);
    
   if(initWiFi()){
     initWebServerAndMqtt();
@@ -388,14 +397,21 @@ void initWifiManager(){
 }
 
 void initWebServerAndMqtt(){
+
+  Serial.println("*** initWebServerAndMqtt - start ***");
+ 
   client.setServer(mqtt_address.c_str(), 1883);
   client.setBufferSize(512);
+  
+  reconnect();
 
   delay(1000);
 
   initHomeAssistantDiscovery();
 
   delay(1000);
+
+  Serial.println("*** initWebSocket ***");
 
   initWebSocket();
 
@@ -410,26 +426,42 @@ void initWebServerAndMqtt(){
 
   server.serveStatic("/", LittleFS, "/");
   server.begin();
+
+  Serial.println("*** initWebServerAndMqtt - end ***");
 }
 
 void reconnect() {
-  while (!client.connected()) {
-    // Use the connect function with username and password
-    if (client.connect("ESP32Client", mqtt_username.c_str(), mqtt_password.c_str())) {
-      // If you need to subscribe to topics upon connection, do it here
-    } else {
-      // If the connection fails, wait 5 seconds before retrying
-      delay(5000);
+  if(isWifiConnected){
+
+    Serial.println("*** Wifi Connected. Attempting to Connect client ***");
+
+    while (!client.connected()) {
+      // Use the connect function with username and password
+      Serial.println("*** Attempting to Connect using credentials: ***");
+      // todo: credentials are blank. get them....
+      Serial.println(mqtt_username.c_str());
+      Serial.println(mqtt_password.c_str());
+      if (client.connect("ESP32Client", mqtt_username.c_str(), mqtt_password.c_str())) {
+        // If you need to subscribe to topics upon connection, do it here
+      } else {
+        // If the connection fails, wait 5 seconds before retrying
+        Serial.println("*** Client connect failed. Trying again in 5 seconds. ***");
+        delay(5000);
+      }
     }
+  }
+  else{
+    Serial.println("*** Wifi Not Connected. ***");
   }
 }
 
 void initHomeAssistantDiscovery() {
+
+    Serial.println("Starting HA Discovery...");
+
     if (!client.connected()) {
         reconnect(); // Your function to reconnect to the MQTT broker
     }
-
-    Serial.println("Starting HA Discovery...");
 
     // Temperature 0
     StaticJsonDocument<512> discoveryDoc0;
@@ -650,12 +682,14 @@ bool initWiFi() {
     currentMillis = millis();
     if (currentMillis - previousMillisWifi >= interval) {
       Serial.println("Failed to connect.");
+      isWifiConnected = false;
       return false;
     }
   }
 
   Serial.println("Connected!");
   Serial.println(WiFi.localIP());
+  isWifiConnected = true;
   return true;
 }
 

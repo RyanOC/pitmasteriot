@@ -13,6 +13,10 @@ p {
   font-size: 1.4rem;
 }
 
+label {
+  font-size: 1.0rem;
+}
+
 .topnav { 
   overflow: hidden; 
   background-color: #0A1128;
@@ -74,9 +78,6 @@ input[type=text], input[type=number], select {
   box-sizing: border-box;
 }
 
-label {
-  font-size: 1.2rem; 
-}
 .value{
   font-size: 1.2rem;
   color: #1282A2;  
@@ -107,4 +108,3 @@ button {
 .button-off:hover {
   background-color: #252524;
 } 
-View raw code

@@ -1,4 +1,3 @@
-#include <WiFiManager.h>
 #include "max6675.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -102,55 +101,71 @@ const char* polyKey_1 = "polyKey_1";
 const char* temperature_0 = "temperature_0";
 const char* temperature_1 = "temperature_1";
 
-const char* thermo_0_adjustment = "tempAdjust_0";
-const char* tempPolyCorrection_0 = "tempPolyCorrection_0";
-const char* thermo_1_adjustment = "tempAdjust_1";
-const char* tempPolyCorrection_1 = "tempPolyCorrection_1";
+// const char* thermo_0_adjustment = "tempAdjust_0";
+// const char* tempPolyCorrection_0 = "tempPolyCorrection_0";
+// const char* thermo_1_adjustment = "tempAdjust_1";
+// const char* tempPolyCorrection_1 = "tempPolyCorrection_1";
 
-// get groups of readings for smoothing averages
+// // get groups of readings for smoothing averages
 unsigned long previousMillis = 0;  // Stores the last time readings were processed
 const long processInterval = 30000;  // Interval to process readings (milliseconds, 10 seconds)
-const int maxReadings = 30;  // Maximum number of readings to store for each thermocouple
-float readings0[maxReadings];  // Array to store readings from thermocouple 1 as floats
-float readings1[maxReadings];  // Array to store readings from thermocouple 2 as floats
-int readingIndex0 = 0;  // Index for the next reading from thermocouple 1
-int readingIndex1 = 0;  // Index for the next reading from thermocouple 2
-unsigned long lastReadingMillis = 0; // Last time a reading was taken
-const long readingInterval = 1000; // Interval to take readings (milliseconds, 1 second)
+// const int maxReadings = 30;  // Maximum number of readings to store for each thermocouple
+// float readings0[maxReadings];  // Array to store readings from thermocouple 1 as floats
+// float readings1[maxReadings];  // Array to store readings from thermocouple 2 as floats
+// int readingIndex0 = 0;  // Index for the next reading from thermocouple 1
+// int readingIndex1 = 0;  // Index for the next reading from thermocouple 2
+// unsigned long lastReadingMillis = 0; // Last time a reading was taken
+// const long readingInterval = 1000; // Interval to take readings (milliseconds, 1 second)
 
-// Global variables to track the initialization period
-bool isInitialized0 = false;
-bool isInitialized1 = false;
+// // Global variables to track the initialization period
+// bool isInitialized0 = false;
+// bool isInitialized1 = false;
 
-int ignoredCount0 = 0; // Count of ignored initial readings for thermocouple 0
-int ignoredCount1 = 0; // Count of ignored initial readings for thermocouple 1
-const int maxIgnoredCount = 2; // Maximum initial readings to ignore for stabilization
+// int ignoredCount0 = 0; // Count of ignored initial readings for thermocouple 0
+// int ignoredCount1 = 0; // Count of ignored initial readings for thermocouple 1
+// const int maxIgnoredCount = 2; // Maximum initial readings to ignore for stabilization
 
-// Moving average filter setup for thermocouple 0
-const int filterWindowSize = 10; // Adjusted window size for more smoothing
-float filterWindow0[filterWindowSize] = {0.0}; // Initialize all to zero
-int filterIndex0 = 0;
-bool filterInitialized0 = false;
+// // Moving average filter setup for thermocouple 0
+// const int filterWindowSize = 10; // Adjusted window size for more smoothing
+// float filterWindow0[filterWindowSize] = {0.0}; // Initialize all to zero
+// int filterIndex0 = 0;
+// bool filterInitialized0 = false;
 
-// Moving average filter setup for thermocouple 1
-float filterWindow1[filterWindowSize] = {0.0}; // Initialize all to zero
-int filterIndex1 = 0;
-bool filterInitialized1 = false;
+// // Moving average filter setup for thermocouple 1
+// float filterWindow1[filterWindowSize] = {0.0}; // Initialize all to zero
+// int filterIndex1 = 0;
+// bool filterInitialized1 = false;
 
 // Function prototype
-float applyMovingAverageFilter(float newReading, float filterWindow[], int &filterIndex, bool &filterInitialized);
+//float applyMovingAverageFilter(float newReading, float filterWindow[], int &filterIndex, bool &filterInitialized);
 
 // Coefficients for the polynomial correction for the first thermometer
-float a0 = 0; // Coefficient for x^2
-float b0 = 0;    // Coefficient for x
-float c0 = 0; // Constant term
+// float a0 = 0; // Coefficient for x^2
+// float b0 = 0;    // Coefficient for x
+// float c0 = 0; // Constant term
 
 // Coefficients for the polynomial correction for the second thermometer
-float a1 = 0; // Coefficient for x^2
-float b1 = 0;    // Coefficient for x
-float c1 = 0; // Constant term (change this only for simple +/- adjustment )
+// float a1 = 0; // Coefficient for x^2
+// float b1 = 0;    // Coefficient for x
+// float c1 = 0; // Constant term (change this only for simple +/- adjustment )
+
+float lowReading_0 = 0;
+float highReading_0 = 0;
+float lowActual_0 = 0;
+float highActual_0 = 0;
+
+float lowReading_1 = 0;
+float highReading_1 = 0;
+float lowActual_1 = 0;
+float highActual_1 = 0; 
 
 const int onboardLed = 2;
+
+bool enableCorrection = false;
+float emaCorrected_0 = 0.0; // EMA for thermocouple 0
+float emaCorrected_1 = 0.0; // EMA for thermocouple 1
+const float alpha = 0.5; // Smoothing factor for EMA. Lower values like 0.1 or 0.05 will be less responsive to changes, but improve smoothing.
+bool firstCorrectedReading = true; // To initialize EMA with the first reading
 
 #pragma endregion
 
@@ -221,44 +236,84 @@ void setup() {
   delay(1000);
 
   // Initialize readings arrays
-  for(int i = 0; i < maxReadings; i++) {
-    readings0[i] = 0.0;
-    readings1[i] = 0.0;
-  }
+  // for(int i = 0; i < maxReadings; i++) {
+  //   readings0[i] = 0.0;
+  //   readings1[i] = 0.0;
+  // }
 
   initLittleFS();
   delay(3000);
 
   preferences.begin("thermo", false);
-  float storedValue_a0 = preferences.getFloat("a0", 0.0);
-  float storedValue_b0 = preferences.getFloat("b0", 0.0);
-  float storedValue_c0 = preferences.getFloat("c0", 0.0);
-  float storedValue_a1 = preferences.getFloat("a1", 0.0);
-  float storedValue_b1 = preferences.getFloat("b1", 0.0);
-  float storedValue_c1 = preferences.getFloat("c1", 0.0); 
+  // float storedValue_a0 = preferences.getFloat("a0", 0.0);
+  // float storedValue_b0 = preferences.getFloat("b0", 0.0);
+  // float storedValue_c0 = preferences.getFloat("c0", 0.0);
+  // float storedValue_a1 = preferences.getFloat("a1", 0.0);
+  // float storedValue_b1 = preferences.getFloat("b1", 0.0);
+  // float storedValue_c1 = preferences.getFloat("c1", 0.0); 
+
+  float storedValue_lowReading_0 = 233.5; //preferences.getFloat("lowReading_0", 248.35);
+  float storedValue_lowActual_0 = 74.4; //preferences.getFloat("lowActual_0", 81.0);
+  float storedValue_highReading_0 = 280; //preferences.getFloat("highReading_0", 274.03); 
+  float storedValue_highActual_0 = 177.0; //preferences.getFloat("highActual_0", 180.1);
+
+  float storedValue_lowReading_1 = preferences.getFloat("lowReading_1", 6);
+  float storedValue_lowActual_1 = preferences.getFloat("lowActual_1", 0);
+  float storedValue_highReading_1 = preferences.getFloat("highReading_1", 106); 
+  float storedValue_highActual_1 = preferences.getFloat("highActual_1", 100);
+
   preferences.end(); 
 
-  a0 = storedValue_a0;
-  b0 = storedValue_b0;
-  c0 = storedValue_c0;
-  a1 = storedValue_a1;
-  b1 = storedValue_b1;
-  c1 = storedValue_c1;
+  // a0 = storedValue_a0;
+  // b0 = storedValue_b0;
+  // c0 = storedValue_c0;
+  // a1 = storedValue_a1;
+  // b1 = storedValue_b1;
+  // c1 = storedValue_c1;
+
+  lowReading_0 = storedValue_lowReading_0;
+  highReading_0 = storedValue_highReading_0;
+  lowActual_0 = storedValue_lowActual_0;
+  highActual_0 = storedValue_highActual_0; 
+
+  lowReading_1 = storedValue_lowReading_1;
+  highReading_1 = storedValue_highReading_1;
+  lowActual_1 = storedValue_lowActual_1;
+  highActual_1 = storedValue_highActual_1; 
 
   Serial.println("Stored Preferences:");
 
-  Serial.print("a0: ");
-  Serial.println(storedValue_a0, 20);
-  Serial.print("b0: ");
-  Serial.println(storedValue_b0, 20);
-  Serial.print("c0: ");
-  Serial.println(storedValue_c0, 20);
-  Serial.print("a1: ");
-  Serial.println(storedValue_a1, 20);
-  Serial.print("b1: ");
-  Serial.println(storedValue_b1, 20);
-  Serial.print("c1: "); 
-  Serial.println(storedValue_c1, 20);
+  // Serial.print("a0: ");
+  // Serial.println(storedValue_a0, 20);
+  // Serial.print("b0: ");
+  // Serial.println(storedValue_b0, 20);
+  // Serial.print("c0: ");
+  // Serial.println(storedValue_c0, 20);
+  // Serial.print("a1: ");
+  // Serial.println(storedValue_a1, 20);
+  // Serial.print("b1: ");
+  // Serial.println(storedValue_b1, 20);
+  // Serial.print("c1: "); 
+  // Serial.println(storedValue_c1, 20);
+
+  Serial.print("lowReading_0: ");
+  Serial.println(lowReading_0, 20);
+  Serial.print("highReading_0: ");
+  Serial.println(highReading_0, 20);
+  Serial.print("lowActual_0: ");
+  Serial.println(lowActual_0, 20);
+  Serial.print("highActual_0: ");
+  Serial.println(highActual_0, 20);
+
+  Serial.print("lowReading_1: ");
+  Serial.println(lowReading_1, 20);
+  Serial.print("highReading_1: ");
+  Serial.println(highReading_1, 20);
+  Serial.print("lowActual_1: ");
+  Serial.println(lowActual_1, 20);
+  Serial.print("highActual_1: ");
+  Serial.println(highActual_1, 20);
+
 
   // Setup LEDC for PWM on pwmPin
   ledcSetup(ledChannel, freq, resolution);
@@ -396,6 +451,28 @@ void initWifiManager(){
     server.begin();
 }
 
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  switch (type) {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      break;
+    case WS_EVT_DATA:
+      handleWebSocketMessage(arg, data, len);
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+  }
+}
+
+void initWebSocket() {
+  ws.onEvent(onEvent);
+  server.addHandler(&ws);
+}
+
 void initWebServerAndMqtt(){
 
   Serial.println("*** initWebServerAndMqtt - start ***");
@@ -492,80 +569,114 @@ void initHomeAssistantDiscovery() {
     Serial.println("Finished HA Discovery");
 }
 
-float applyMovingAverageFilter(float newReading, float filterWindow[], int &filterIndex, bool &filterInitialized) {
-    filterWindow[filterIndex++] = newReading;
-    if (filterIndex >= filterWindowSize) {
-        filterIndex = 0; // Wrap index
-        filterInitialized = true;
-    }
+// float applyMovingAverageFilter(float newReading, float filterWindow[], int &filterIndex, bool &filterInitialized) {
+//     filterWindow[filterIndex++] = newReading;
+//     if (filterIndex >= filterWindowSize) {
+//         filterIndex = 0; // Wrap index
+//         filterInitialized = true;
+//     }
     
-    if (!filterInitialized) return newReading; // Not enough data for filtering
+//     if (!filterInitialized) return newReading; // Not enough data for filtering
 
-    float sum = 0.0;
-    for (int i = 0; i < filterWindowSize; i++) {
-        sum += filterWindow[i];
-    }
-    return sum / filterWindowSize;
+//     float sum = 0.0;
+//     for (int i = 0; i < filterWindowSize; i++) {
+//         sum += filterWindow[i];
+//     }
+//     return sum / filterWindowSize;
+// }
+
+void setFanSpeed(int percentage) {
+  //Serial.print(percentage);  
+  //Serial.println("%");
+  int duty = (percentage * 255) / 100;
+  ledcWrite(ledChannel, duty); 
+  readPulse();
 }
 
-void collectReadings() {
-    unsigned long currentMillis = millis();
-    if (currentMillis - lastReadingMillis >= readingInterval) {
-        lastReadingMillis = currentMillis;
-
-        // For thermocouple 0
-        float rawReading0 = thermocouple_0.readFahrenheit(); // Assume this could be NaN
-        if (!isnan(rawReading0)) { // Check if the reading is valid
-            float filteredReading0 = applyMovingAverageFilter(rawReading0, filterWindow0, filterIndex0, filterInitialized0);
-            readings0[readingIndex0++] = filteredReading0;
-        }
-        readingIndex0 %= maxReadings;
-
-        // For thermocouple 1
-        float rawReading1 = thermocouple_1.readFahrenheit(); // Assume this could be NaN
-        if (!isnan(rawReading1)) { // Check if the reading is valid
-            float filteredReading1 = applyMovingAverageFilter(rawReading1, filterWindow1, filterIndex1, filterInitialized1);
-            readings1[readingIndex1++] = filteredReading1;
-        }
-        readingIndex1 %= maxReadings;
-    }
+void readPulse() {
+  unsigned long pulseDuration = pulseIn(tachPin, LOW, 1000000);
+  double frequency = 1000000.0 / pulseDuration;
+  //Serial.print("pulse duration:");
+  //Serial.println(pulseDuration);
+  //Serial.print("time for a full rev. (microsec.):");
+  //Serial.println(pulseDuration * 2);
+  //Serial.print("freq. (Hz):");
+  //Serial.println(frequency / 2);
+  //Serial.print("RPM:");
+  //Serial.println(frequency / 2 * 60);
+  // Read RPM feedback from the fan (optional)
+  int fanRPM = digitalRead(tachPin); // Assuming fan's TACH signal is connected to tachPin
+  //Serial.print("Fan RPM feedback: ");
+  //Serial.println(fanRPM);
 }
+
+// void collectReadings() {
+//     unsigned long currentMillis = millis();
+//     if (currentMillis - lastReadingMillis >= readingInterval) {
+//         lastReadingMillis = currentMillis;
+
+//         // For thermocouple 0
+//         float rawReading0 = thermocouple_0.readFahrenheit(); // Assume this could be NaN
+//         if (!isnan(rawReading0)) { // Check if the reading is valid
+//             float filteredReading0 = applyMovingAverageFilter(rawReading0, filterWindow0, filterIndex0, filterInitialized0);
+//             readings0[readingIndex0++] = filteredReading0;
+//         }
+//         readingIndex0 %= maxReadings;
+
+//         // For thermocouple 1
+//         float rawReading1 = thermocouple_1.readFahrenheit(); // Assume this could be NaN
+//         if (!isnan(rawReading1)) { // Check if the reading is valid
+//             float filteredReading1 = applyMovingAverageFilter(rawReading1, filterWindow1, filterIndex1, filterInitialized1);
+//             readings1[readingIndex1++] = filteredReading1;
+//         }
+//         readingIndex1 %= maxReadings;
+//     }
+// }
 
 void processReadings() {
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= processInterval) {
-        previousMillis = currentMillis;
+    unsigned long currentMillisP = millis();
+    if (currentMillisP - previousMillis >= processInterval) {
+        previousMillis = currentMillisP;
+
+        float rawReading0 = thermocouple_0.readFahrenheit();
+        float rawReading1 = thermocouple_1.readFahrenheit();
 
         Serial.println("Raw Temperatures:");
-        Serial.println(thermocouple_0.readFahrenheit());
-        Serial.println(thermocouple_1.readFahrenheit());
+        Serial.println(rawReading0);
+        Serial.println(rawReading1);
 
         float correctedThermoFahrenheit_0 = NAN;
         float correctedThermoFahrenheit_1 = NAN;
 
-        // Check and process readings for each thermocouple independently
-        if (isInitialized0 || ignoredCount0++ >= maxIgnoredCount) {
-            isInitialized0 = true;
-            correctedThermoFahrenheit_0 = processThermocoupleReadings(readings0, "Thermocouple 0", a0, b0, c0);
-            readingIndex0 = 0; // Reset index for new cycle
-        }
-        
-        if (isInitialized1 || ignoredCount1++ >= maxIgnoredCount) {
-            isInitialized1 = true;
-            correctedThermoFahrenheit_1 = processThermocoupleReadings(readings1, "Thermocouple 1", a1, b1, c1);
-            readingIndex1 = 0; // Reset index for new cycle
+        correctedThermoFahrenheit_0 = processThermocoupleReadings(rawReading0, "Thermocouple_0", lowReading_0, highReading_0, lowActual_0, highActual_0);
+        correctedThermoFahrenheit_1 = processThermocoupleReadings(rawReading1, "Thermocouple_1", lowReading_1, highReading_1, lowActual_1, highActual_1);
+
+        // Initialize EMA with the first corrected reading
+        if (firstCorrectedReading) {
+            emaCorrected_0 = correctedThermoFahrenheit_0;
+            emaCorrected_1 = correctedThermoFahrenheit_1;
+            firstCorrectedReading = false;
+        } else {
+            // Update EMA for each corrected temperature
+            emaCorrected_0 = alpha * correctedThermoFahrenheit_0 + (1 - alpha) * emaCorrected_0;
+            emaCorrected_1 = alpha * correctedThermoFahrenheit_1 + (1 - alpha) * emaCorrected_1;
         }
 
+        correctedThermoFahrenheit_0 = emaCorrected_0;
+        correctedThermoFahrenheit_1 = emaCorrected_1;
+
         if (!isnan(correctedThermoFahrenheit_0) && !isnan(correctedThermoFahrenheit_1)) {
-          Serial.println("Polynomial Corrections:");
-          Serial.println(correctedThermoFahrenheit_0, 1);
-          Serial.println(correctedThermoFahrenheit_1, 1);
+          //Serial.println("Temperature Corrections:");
+          //Serial.println(correctedThermoFahrenheit_0, 1);
+          //Serial.println(correctedThermoFahrenheit_1, 1);
 
           // Use a JSON document to structure the data
           StaticJsonDocument<256> doc;
+          doc["temperature_0_raw"] = rawReading0;
+          doc["temperature_1_raw"] = rawReading1;
           doc["temperature_0"] = correctedThermoFahrenheit_0;
           doc["temperature_1"] = correctedThermoFahrenheit_1;
-
+          
           // Serialize the JSON document to a String
           String jsonString;
           serializeJson(doc, jsonString);
@@ -588,41 +699,58 @@ void processReadings() {
     }
 }
 
-float processThermocoupleReadings(float readings[], const char* thermocoupleName, float a, float b, float c) {
-    float sum = 0.0;
-    int validCount = 0;
-    for (int i = 0; i < maxReadings; i++) {
-        if (!isnan(readings[i])) { // Ensure only valid readings are considered
-            sum += readings[i];
-            validCount++;
+float processThermocoupleReadings(float reading, const char* thermocoupleName, float a, float b, float c, float d) {
+    // float sum = 0.0;
+    // int validCount = 0;
+    // for (int i = 0; i < maxReadings; i++) {
+    //     if (!isnan(readings[i])) { // Ensure only valid readings are considered
+    //         sum += readings[i];
+    //         validCount++;
+    //     }
+    // }
+    //if (validCount > 0) { // Proceed only if there are valid readings
+        //float averageReading = sum / validCount;
+        //float correctedTemperature = applyPolyCorrection(averageReading, a, b, c);
+
+        if(enableCorrection) {
+          float correctedTemperature = applyLinearCorrection(reading, a, b, c, d);
+          Serial.print(thermocoupleName);
+          Serial.print(" Corrected: ");
+          Serial.println(correctedTemperature, 1);
+          return correctedTemperature;
         }
-    }
-    if (validCount > 0) { // Proceed only if there are valid readings
-        float averageReading = sum / validCount;
-        float correctedTemperature = applyPolyCorrection(averageReading, a, b, c);
-        Serial.print(thermocoupleName);
-        Serial.print(" Corrected Temperature: ");
-        Serial.println(correctedTemperature, 1);
-        return correctedTemperature;
-    } else {
-        Serial.print(thermocoupleName);
-        Serial.println(" - No valid readings available.");
-        return NAN;
-    }
+        else {
+          Serial.print(thermocoupleName);
+          Serial.print(" Non-Corrected: ");
+          Serial.println(reading, 1);
+          return reading;
+        }
+        
+    //} else {
+    //    Serial.print(thermocoupleName);
+    //    Serial.println(" - No valid readings available.");
+    //    return NAN;
+    //}
 }
 
-float applyPolyCorrection(float rawTemp, float a, float b, float c) {
-    // Check if all coefficients are zero
-    if (a == 0 && b == 0 && c == 0) {
-        // Return the raw temperature if no correction is desired
-        //Serial.println("return raw...");
-        return rawTemp;
-    }
-
-    //Serial.println("apply poly correction...");
-    // Otherwise, apply the polynomial correction
-    return a * rawTemp * rawTemp + b * rawTemp + c;
+float applyLinearCorrection(float rawTemp, float lowReading, float highReading, float lowActual, float highActual) {
+  const float m = (highActual - lowActual) / (highReading - lowReading);
+  const float b = lowActual - m * lowReading;
+  return m * rawTemp + b;
 }
+
+// float applyPolyCorrection(float rawTemp, float a, float b, float c) {
+//     // Check if all coefficients are zero
+//     if (a == 0 && b == 0 && c == 0) {
+//         // Return the raw temperature if no correction is desired
+//         //Serial.println("return raw...");
+//         return rawTemp;
+//     }
+
+//     //Serial.println("apply poly correction...");
+//     // Otherwise, apply the polynomial correction
+//     return a * rawTemp * rawTemp + b * rawTemp + c;
+// }
 
 void initLittleFS(){
     if(!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)){
@@ -743,95 +871,75 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
         // Deserialize the JSON string into the JsonDocument
         DeserializationError error = deserializeJson(doc, jsonString);
 
-        if (!error) {
-            String poly0 = doc[tempPolyCorrection_0];
-            String poly1 = doc[tempPolyCorrection_1];
+        // if (!error) {
+        //     String poly0 = doc[tempPolyCorrection_0];
+        //     String poly1 = doc[tempPolyCorrection_1];
 
-            // Function to split the string and fill the floats, with validation
-            auto parseAndFill = [](const String& str, float& f1, float& f2, float& f3) -> bool {
-                int count = 0;
-                char* p = strtok((char*)str.c_str(), ", ");
-                while (p != NULL && count < 3) {
-                    float val = atof(p);
-                    if (val == 0 && *p != '0') return false; // Basic validation, fails if atof returns 0 but char is not '0'
-                    if (count == 0) f1 = val;
-                    else if (count == 1) f2 = val;
-                    else if (count == 2) f3 = val;
-                    p = strtok(NULL, ", ");
-                    count++;
-                }
-                return count == 3; // Ensure exactly 3 values were parsed
-            };
+        //     Function to split the string and fill the floats, with validation
+        //     auto parseAndFill = [](const String& str, float& f1, float& f2, float& f3) -> bool {
+        //         int count = 0;
+        //         char* p = strtok((char*)str.c_str(), ", ");
+        //         while (p != NULL && count < 3) {
+        //             float val = atof(p);
+        //             if (val == 0 && *p != '0') return false; // Basic validation, fails if atof returns 0 but char is not '0'
+        //             if (count == 0) f1 = val;
+        //             else if (count == 1) f2 = val;
+        //             else if (count == 2) f3 = val;
+        //             p = strtok(NULL, ", ");
+        //             count++;
+        //         }
+        //         return count == 3; // Ensure exactly 3 values were parsed
+        //     };
 
-            // Attempt to parse and fill values for each set
-            bool valid0 = parseAndFill(poly0, a0, b0, c0);
-            bool valid1 = parseAndFill(poly1, a1, b1, c1);
+        //     // Attempt to parse and fill values for each set
+        //     bool valid0 = parseAndFill(poly0, a0, b0, c0);
+        //     bool valid1 = parseAndFill(poly1, a1, b1, c1);
 
-            if (!valid0 || !valid1) {
-                // Handle invalid input, perhaps by setting a flag or printing an error
-                Serial.println("Error: Invalid input in JSON string.");
-            }
-            else{
-              Serial.println("Success: Poly corrections set.");
-              Serial.print("a0: ");
-              Serial.println(a0, 20);
-              Serial.print("b0: ");
-              Serial.println(b0, 20);
-              Serial.print("c0: ");
-              Serial.println(c0, 20);
-              Serial.print("a1: ");
-              Serial.println(a1, 20);
-              Serial.print("b1: ");
-              Serial.println(b1, 20);
-              Serial.print("c1: ");
-              Serial.println(c1, 20);
+        //     if (!valid0 || !valid1) {
+        //         // Handle invalid input, perhaps by setting a flag or printing an error
+        //         Serial.println("Error: Invalid input in JSON string.");
+        //     }
+        //     else{
+        //       Serial.println("Success: Poly corrections set.");
+        //       Serial.print("a0: ");
+        //       Serial.println(a0, 20);
+        //       Serial.print("b0: ");
+        //       Serial.println(b0, 20);
+        //       Serial.print("c0: ");
+        //       Serial.println(c0, 20);
+        //       Serial.print("a1: ");
+        //       Serial.println(a1, 20);
+        //       Serial.print("b1: ");
+        //       Serial.println(b1, 20);
+        //       Serial.print("c1: ");
+        //       Serial.println(c1, 20);
 
-              preferences.begin("thermo", false);
-              bool success = preferences.putFloat("a0", a0);
-              preferences.putFloat("b0", b0);
-              preferences.putFloat("c0", c0);
-              preferences.putFloat("a1", a1);
-              preferences.putFloat("b1", b1);
-              preferences.putFloat("c1", c1);
-              preferences.end();
+        //       preferences.begin("thermo", false);
+        //       bool success = preferences.putFloat("a0", a0);
+        //       preferences.putFloat("b0", b0);
+        //       preferences.putFloat("c0", c0);
+        //       preferences.putFloat("a1", a1);
+        //       preferences.putFloat("b1", b1);
+        //       preferences.putFloat("c1", c1);
+        //       preferences.end();
 
-              if (!success) {
-                Serial.println("Failed to write myFloatKey");
-              }
-              else{
-                Serial.println("values added to preferences.");
-              }
-            }
-        } else {
-            // Handle the error from deserializeJson
-            Serial.print("deserializeJson() failed: ");
-            Serial.println(error.c_str());
-        }
+        //       if (!success) {
+        //         Serial.println("Failed to write myFloatKey");
+        //       }
+        //       else{
+        //         Serial.println("values added to preferences.");
+        //       }
+        //     }
+
+
+        // } else {
+        //     // Handle the error from deserializeJson
+        //     Serial.print("deserializeJson() failed: ");
+        //     Serial.println(error.c_str());
+        // }
       }
     }
   }
-}
-
-void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-  switch (type) {
-    case WS_EVT_CONNECT:
-      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-      break;
-    case WS_EVT_DISCONNECT:
-      Serial.printf("WebSocket client #%u disconnected\n", client->id());
-      break;
-    case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len);
-      break;
-    case WS_EVT_PONG:
-    case WS_EVT_ERROR:
-      break;
-  }
-}
-
-void initWebSocket() {
-  ws.onEvent(onEvent);
-  server.addHandler(&ws);
 }
 
 void stopFan() {
@@ -842,31 +950,6 @@ void stopFan() {
     ledcAttachPin(pwmPin, ledChannel); // Reconfigure for PWM after reading pulse
 }
 
-void readPulse() {
-  unsigned long pulseDuration = pulseIn(tachPin, LOW, 1000000);
-  double frequency = 1000000.0 / pulseDuration;
-  //Serial.print("pulse duration:");
-  //Serial.println(pulseDuration);
-  //Serial.print("time for a full rev. (microsec.):");
-  //Serial.println(pulseDuration * 2);
-  //Serial.print("freq. (Hz):");
-  //Serial.println(frequency / 2);
-  //Serial.print("RPM:");
-  //Serial.println(frequency / 2 * 60);
-  // Read RPM feedback from the fan (optional)
-  int fanRPM = digitalRead(tachPin); // Assuming fan's TACH signal is connected to tachPin
-  //Serial.print("Fan RPM feedback: ");
-  //Serial.println(fanRPM);
-}
-
-void setFanSpeed(int percentage) {
-  //Serial.print(percentage);  
-  //Serial.println("%");
-  int duty = (percentage * 255) / 100;
-  ledcWrite(ledChannel, duty); 
-  readPulse();
-}
-
 void loop() { 
 
   if (!client.connected()) {
@@ -874,7 +957,7 @@ void loop() {
   }
   client.loop();
 
-  collectReadings();
+  //collectReadings();
   processReadings();
 
   ws.cleanupClients();
